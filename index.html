@@ -89,13 +89,13 @@
     <div class="group-title">Size (velocity maps to size)</div>
     <div class="row"><span>Min</span><span class="val" id="min-size-v">8</span></div>
     <input type="range" id="min-size" min="2" max="200" value="8">
-    <div class="row"><span>Max</span><span class="val" id="max-size-v">140</span></div>
-    <input type="range" id="max-size" min="10" max="600" value="140">
+    <div class="row"><span>Max</span><span class="val" id="max-size-v">500</span></div>
+    <input type="range" id="max-size" min="10" max="600" value="500">
   </div>
   <div class="group">
     <div class="group-title">Canvas</div>
-    <div class="row"><span>Clear after N shapes</span><span class="val" id="max-v">150</span></div>
-    <input type="range" id="max-shapes" min="10" max="800" value="150">
+    <div class="row"><span>Clear after N shapes</span><span class="val" id="max-v">20</span></div>
+    <input type="range" id="max-shapes" min="10" max="800" value="20">
     <div class="row"><span>Burst (vel-scaled extras)</span><span class="val" id="burst-v">0</span></div>
     <input type="range" id="burst" min="0" max="8" value="0" step="1">
   </div>
@@ -106,7 +106,7 @@
       <option value="note-x">Note maps to X</option>
       <option value="quadrant">Note maps to quadrant</option>
       <option value="radial">Radial from center</option>
-      <option value="center">Center cluster</option>
+      <option value="center" selected>Center cluster</option>
     </select>
     <div class="group-title" style="margin-top:6px">Velocity maps to</div>
     <select id="vel-mode">
@@ -130,10 +130,10 @@ const cfg = {
   monoColor: '#ffffff',
   shapes:    new Set(['circle','ring','rect','triangle']),
   minSize:   8,
-  maxSize:   140,
-  maxShapes: 150,
+  maxSize:   500,
+  maxShapes: 20,
   burst:     0,
-  posMode:   'random',
+  posMode:   'center',
   velMode:   'size',
   bgColor:   '#000000',
 };
