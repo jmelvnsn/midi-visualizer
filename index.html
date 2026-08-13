@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MIDI Visualizer</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #000;
+    overflow: hidden;
+    font-family: 'Courier New', monospace;
+    color: #fff;
+    user-select: none;
+  }
+
+  #canvas {
+    display: block;
+    position: fixed;
+    inset: 0;
+  }
+
+  /* ── HUD bar ── */
+  #hud {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    gap: 12px;
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(10px);
+    border-top: 1px solid rgba(255,255,255,0.09);
+    z-index: 100;
+    font-size: 11px;
+  }
+
+  .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #333;
+    flex-shrink: 0;
+    transition: background 0.08s;
+  }
+  .dot.connected { background: #3f3; }
+  .dot.flash     { background: #ff0 !important; }
+
+  #status-label { color: rgba(255,255,255,0.55); white-space: nowrap; min-width: 110px; }
+
+  select, button {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: #fff;
+    font-family: inherit;
+    font-size: 11px;
+    border-radius: 3px;
+    padding: 3px 8px;
+    cursor: pointer;
+    outline: none;
+  }
+  select:hover, button:hover { background: rgba(255,255,255,0.16); }
+  select option { background: #111; }
+
+  #event-log {
+    margin-left: auto;
+    color: rgba(255,255,255,0.35);
+    font-size: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 260px;
+  }
+
+  /* ── Settings panel ── */
+  #panel {
+    position: fixed;
+    bottom: 40px; left: 0; right: 0;
+    max-height: 60vh;
+    overflow-y: auto;
+    background: rgba(10,10,10,0.88);
+    backdrop-filter: blur(14px);
+    border-top: 1px solid rgba(255,255,255,0.1);
+    padding: 18px 20px 22px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 20px 28px;
+    z-index: 99;
+    transform: translateY(100%);
+    transition: transform 0.28s cubic-bezier(.4,0,.2,1);
+  }
+  #panel.open { transform: translateY(0); }
+
+  .group { display: flex; flex-direction: column; gap: 7px; }
+
+  .group-title {
+    font-size: 9px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.35);
+    margin-bottom: 2px;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    font-size: 11px;
+  }
+  .row span { color: rgba(255,255,255,0.5); }
+  .row .val { color: rgba(255,255,255,0.85); min-width: 30px; text-align: right; }
+
+  input[type=range] {
+    width: 100%;
+    height: 3px;
+    accent-color: rgba(255,255,255,0.7);
+    cursor: pointer;
+  }
+
+  input[type=color] {
+    width: 100%;
+    height: 28px;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 3px;
+    background: none;
+    cursor: pointer;
+    padding: 0 2px;
+  }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip {
+    padding: 3px 9px;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 2px;
+    font-size: 10px;
+    cursor: pointer;
+    background: rgba(255,255,255,0.04);
+    transition: background 0.12s, border-color 0.12s;
+  }
+  .chip.on { background: rgba(255,255,255,0.18); border-color: rgba(255,255,255,0.45); }
+
+  label.check {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11px;
+    cursor: pointer;
+    color: rgba(255,255,255,0.7);
+  }
+  input[type=checkbox] { accent-color: #fff; cursor: pointer; }
+
+  #demo-btn {
+    padding: 3px 10px;
+    font-size: 10px;
+    color: rgba(255,255,255,0.5);
+    border-color: rgba(255,255,255,0.1);
+  }
+  #demo-btn.running {
+    color: #ff0;
+    border-color: rgba(255,255,0,0.4);
+    background: rgba(255,255,0,0.06);
+  }
+
+  #hint {
+    position: fixed;
+    bottom: 50px; right: 16px;
+    font-size: 9px;
+    color: rgba(255,255,255,0.18);
+    letter-spacing: 0.5px;
+    z-index: 98;
+    line-height: 1.7;
+    text-align: right;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<div id="hint">
+  S — settings &nbsp;|&nbsp; C — clear &nbsp;|&nbsp; Space — demo
+</div>
+
+<!-- ── HUD ── -->
+<div id="hud">
+  <div class="dot" id="dot"></div>
+  <span id="status-label">No MIDI</span>
+
+  <select id="device-select" title="MIDI Input Device">
+    <option value="">— device —</option>
+  </select>
+
+  <select id="ch-select" title="MIDI Channel">
+    <option value="-1">All Ch</option>
+  </select>
+
+  <button id="settings-btn">Settings ▲</button>
+  <button id="demo-btn">Demo</button>
+
+  <span id="event-log">—</span>
+</div>
+
+<!-- ── Settings panel ── -->
+<div id="panel">
+
+  <div class="group">
+    <div class="group-title">Color</div>
+    <select id="color-mode">
+      <option value="chromatic">Chromatic  (note → hue)</option>
+      <option value="velocity">Velocity   (cool → warm)</option>
+      <option value="random">Random</option>
+      <option value="mono">Monochrome</option>
+    </select>
+    <input type="color" id="mono-color" value="#ffffff" title="Monochrome base color">
+  </div>
+
+  <div class="group">
+    <div class="group-title">Shapes</div>
+    <div class="chips" id="shape-chips">
+      <div class="chip on" data-shape="circle">Circle</div>
+      <div class="chip on" data-shape="ring">Ring</div>
+      <div class="chip on" data-shape="rect">Rect</div>
+      <div class="chip on" data-shape="diamond">Diamond</div>
+      <div class="chip on" data-shape="triangle">Triangle</div>
+      <div class="chip on" data-shape="star">Star</div>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="group-title">Size  (velocity → size)</div>
+    <div class="row"><span>Min</span><span class="val" id="min-size-v">8</span></div>
+    <input type="range" id="min-size" min="2" max="200" value="8">
+    <div class="row"><span>Max</span><span class="val" id="max-size-v">140</span></div>
+    <input type="range" id="max-size" min="10" max="600" value="140">
+  </div>
+
+  <div class="group">
+    <div class="group-title">Trail &amp; Decay</div>
+    <div class="row"><span>Trail</span><span class="val" id="trail-v">40%</span></div>
+    <input type="range" id="trail" min="0" max="99" value="40">
+    <div class="row"><span>Decay</span><span class="val" id="decay-v">0.018</span></div>
+    <input type="range" id="decay" min="1" max="60" value="18">
+  </div>
+
+  <div class="group">
+    <div class="group-title">Spawn</div>
+    <div class="row"><span>Max shapes</span><span class="val" id="max-v">400</span></div>
+    <input type="range" id="max-shapes" min="20" max="1200" value="400">
+    <div class="row"><span>Burst</span><span class="val" id="burst-v">0</span></div>
+    <input type="range" id="burst" min="0" max="8" value="0" step="1">
+    <div class="row"><span>Spread</span><span class="val" id="spread-v">3</span></div>
+    <input type="range" id="spread" min="0" max="20" value="3">
+  </div>
+
+  <div class="group">
+    <div class="group-title">Position</div>
+    <select id="pos-mode">
+      <option value="random">Fully random</option>
+      <option value="note-x">Note → X axis</option>
+      <option value="quadrant">Note → quadrant</option>
+      <option value="radial">Note → radial</option>
+      <option value="center">Center burst</option>
+    </select>
+    <div class="group-title" style="margin-top:6px">Velocity maps to</div>
+    <select id="vel-mode">
+      <option value="size">Size only</option>
+      <option value="brightness">Brightness only</option>
+      <option value="both">Size + brightness</option>
+    </select>
+  </div>
+
+  <div class="group">
+    <div class="group-title">Background</div>
+    <input type="color" id="bg-color" value="#000000">
+    <label class="check"><input type="checkbox" id="chk-rotate" checked> Rotate shapes</label>
+    <label class="check"><input type="checkbox" id="chk-drift"  checked> Drift on spawn</label>
+    <label class="check"><input type="checkbox" id="chk-scale"> Scale-out on spawn</label>
+  </div>
+
+</div>
+
+<script>
+'use strict';
+
+// ─── CONFIG ──────────────────────────────────────────────────────────────────
+const cfg = {
+  colorMode:  'chromatic',
+  monoColor:  '#ffffff',
+  shapes:     new Set(['circle','ring','rect','diamond','triangle','star']),
+  minSize:    8,
+  maxSize:    140,
+  trail:      0.40,   // persistence 0–1 (higher = longer trail)
+  decay:      0.018,  // alpha reduction per frame
+  maxShapes:  400,
+  burst:      0,
+  spread:     3,
+  posMode:    'random',
+  velMode:    'size',
+  bgColor:    '#000000',
+  rotate:     true,
+  drift:      true,
+  scaleOut:   false,
+};
+
+// ─── CANVAS ──────────────────────────────────────────────────────────────────
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d', { alpha: false });
+
+function resize() {
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ─── SHAPE POOL ──────────────────────────────────────────────────────────────
+const pool   = [];
+const active = [];
+
+function makeShape() {
+  return {
+    x: 0, y: 0, size: 0, alpha: 0, alpha0: 0,
+    type: 'circle',
+    hue: 0, sat: 0, lit: 0,
+    useRGB: false, r: 0, g: 0, b: 0,
+    rot: 0, rotV: 0,
+    vx: 0, vy: 0,
+    decay: 0,
+  };
+}
+
+function acquire() { return pool.length ? pool.pop() : makeShape(); }
+function release(s) { pool.push(s); }
+
+// ─── COLOR HELPERS ───────────────────────────────────────────────────────────
+function hexToRGB(hex) {
+  return [
+    parseInt(hex.slice(1,3), 16),
+    parseInt(hex.slice(3,5), 16),
+    parseInt(hex.slice(5,7), 16),
+  ];
+}
+
+function getColor(note, velNorm) {
+  const brightBoost = (cfg.velMode === 'brightness' || cfg.velMode === 'both')
+    ? velNorm : 0.5 + velNorm * 0.3;
+
+  switch (cfg.colorMode) {
+    case 'chromatic': {
+      // Each semitone (0–11) gets a distinct hue, octave repeats
+      const hue = (note % 12) * 30;
+      const sat = 65 + velNorm * 35;
+      const lit = cfg.velMode === 'size'
+        ? 45 + velNorm * 15
+        : 25 + brightBoost * 55;
+      return { useRGB: false, hue, sat, lit };
+    }
+    case 'velocity': {
+      // low velocity = cool blue/purple, high = warm red/orange
+      const hue = 240 - velNorm * 240;
+      const lit  = 35 + brightBoost * 35;
+      return { useRGB: false, hue, sat: 85, lit };
+    }
+    case 'random': {
+      const lit = cfg.velMode === 'size' ? 50 : 30 + brightBoost * 40;
+      return { useRGB: false, hue: Math.random() * 360, sat: 75 + Math.random() * 25, lit };
+    }
+    case 'mono': {
+      const [r, g, b] = hexToRGB(cfg.monoColor);
+      return { useRGB: true, r, g, b };
+    }
+  }
+}
+
+// ─── POSITION ────────────────────────────────────────────────────────────────
+function getPosition(note) {
+  const W = canvas.width, H = canvas.height;
+  switch (cfg.posMode) {
+    case 'note-x': {
+      return { x: (note / 127) * W, y: Math.random() * H };
+    }
+    case 'quadrant': {
+      const q  = Math.floor((note / 128) * 4);
+      const qx = (q % 2) * (W / 2);
+      const qy = Math.floor(q / 2) * (H / 2);
+      return { x: qx + Math.random() * (W / 2), y: qy + Math.random() * (H / 2) };
+    }
+    case 'radial': {
+      const angle = (note / 127) * Math.PI * 2;
+      const r     = 80 + Math.random() * Math.min(W, H) * 0.38;
+      return { x: W / 2 + Math.cos(angle) * r, y: H / 2 + Math.sin(angle) * r };
+    }
+    case 'center': {
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.random() * Math.min(W, H) * 0.15;
+      return { x: W / 2 + Math.cos(a) * r, y: H / 2 + Math.sin(a) * r };
+    }
+    default:
+      return { x: Math.random() * W, y: Math.random() * H };
+  }
+}
+
+// ─── SHAPE TYPE ──────────────────────────────────────────────────────────────
+function pickShape(note) {
+  const arr = [...cfg.shapes];
+  return arr.length ? arr[note % arr.length] : 'circle';
+}
+
+// ─── SPAWN ───────────────────────────────────────────────────────────────────
+function spawn(note, velocity) {
+  if (active.length >= cfg.maxShapes) {
+    release(active.shift()); // recycle oldest
+  }
+
+  const velNorm = velocity / 127;
+  const pos     = getPosition(note);
+  const color   = getColor(note, velNorm);
+  const s       = acquire();
+
+  const sizeMult = (cfg.velMode === 'size' || cfg.velMode === 'both') ? velNorm : 0.5 + Math.random() * 0.5;
+  s.size   = cfg.minSize + sizeMult * (cfg.maxSize - cfg.minSize);
+  s.x      = pos.x;
+  s.y      = pos.y;
+  s.alpha  = 0.75 + velNorm * 0.25;
+  s.alpha0 = s.alpha;
+  s.type   = pickShape(note);
+
+  s.useRGB = color.useRGB;
+  if (color.useRGB) { s.r = color.r; s.g = color.g; s.b = color.b; }
+  else              { s.hue = color.hue; s.sat = color.sat; s.lit = color.lit; }
+
+  s.rot    = Math.random() * Math.PI * 2;
+  s.rotV   = cfg.rotate ? (Math.random() - 0.5) * 0.14 : 0;
+  s.vx     = cfg.drift  ? (Math.random() - 0.5) * cfg.spread : 0;
+  s.vy     = cfg.drift  ? (Math.random() - 0.5) * cfg.spread : 0;
+  s.decay  = cfg.decay * (0.65 + Math.random() * 0.7);
+
+  active.push(s);
+}
+
+function trigger(note, velocity) {
+  spawn(note, velocity);
+
+  // Burst: high velocity adds extra shapes
+  const extras = Math.floor(cfg.burst * (velocity / 127));
+  for (let i = 0; i < extras; i++) {
+    const v = Math.max(1, Math.round(velocity * (0.4 + Math.random() * 0.6)));
+    spawn(note + Math.round(Math.random() * 4 - 2), v);
+  }
+}
+
+// ─── DRAW SHAPES ─────────────────────────────────────────────────────────────
+function drawPolygon(n, r) {
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 - Math.PI / 2;
+    i === 0 ? ctx.moveTo(Math.cos(a)*r, Math.sin(a)*r)
+            : ctx.lineTo(Math.cos(a)*r, Math.sin(a)*r);
+  }
+  ctx.closePath();
+}
+
+function drawStar(pts, ro, ri) {
+  ctx.beginPath();
+  for (let i = 0; i < pts * 2; i++) {
+    const a = (i / (pts * 2)) * Math.PI * 2 - Math.PI / 2;
+    const r = i % 2 === 0 ? ro : ri;
+    i === 0 ? ctx.moveTo(Math.cos(a)*r, Math.sin(a)*r)
+            : ctx.lineTo(Math.cos(a)*r, Math.sin(a)*r);
+  }
+  ctx.closePath();
+}
+
+function drawShape(s) {
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  ctx.rotate(s.rot);
+
+  let displayAlpha = s.alpha;
+  if (cfg.scaleOut) {
+    const progress = 1 - s.alpha / s.alpha0;
+    ctx.scale(1 + progress * 0.5, 1 + progress * 0.5);
+  }
+  ctx.globalAlpha = displayAlpha;
+
+  const hs = s.size / 2;
+  const color = s.useRGB
+    ? `rgb(${s.r},${s.g},${s.b})`
+    : `hsl(${s.hue},${s.sat}%,${s.lit}%)`;
+  ctx.fillStyle   = color;
+  ctx.strokeStyle = color;
+  ctx.lineWidth   = Math.max(1.5, s.size * 0.07);
+
+  switch (s.type) {
+    case 'circle':
+      ctx.beginPath();
+      ctx.arc(0, 0, hs, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+
+    case 'ring':
+      ctx.beginPath();
+      ctx.arc(0, 0, hs, 0, Math.PI * 2);
+      ctx.stroke();
+      break;
+
+    case 'rect':
+      ctx.fillRect(-hs, -hs, s.size, s.size);
+      break;
+
+    case 'diamond':
+      ctx.beginPath();
+      ctx.moveTo(0, -hs);
+      ctx.lineTo(hs, 0);
+      ctx.lineTo(0, hs);
+      ctx.lineTo(-hs, 0);
+      ctx.closePath();
+      ctx.fill();
+      break;
+
+    case 'triangle':
+      drawPolygon(3, hs);
+      ctx.fill();
+      break;
+
+    case 'star':
+      drawStar(5, hs, hs * 0.42);
+      ctx.fill();
+      break;
+  }
+
+  ctx.restore();
+}
+
+// ─── RENDER LOOP ─────────────────────────────────────────────────────────────
+let bgFill = makeBgFill();
+
+function makeBgFill() {
+  const [r, g, b] = hexToRGB(cfg.bgColor);
+  // trail 0 = instant clear (full alpha), trail 1 = no clear (0 alpha)
+  const a = Math.max(0.012, 1 - cfg.trail);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+function render() {
+  requestAnimationFrame(render);
+
+  // Trail: semi-transparent background each frame
+  ctx.globalAlpha = 1;
+  ctx.fillStyle   = bgFill;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Update + draw each shape
+  for (let i = active.length - 1; i >= 0; i--) {
+    const s = active[i];
+    s.alpha -= s.decay;
+    s.x     += s.vx;
+    s.y     += s.vy;
+    s.rot   += s.rotV;
+
+    if (s.alpha <= 0) {
+      release(s);
+      active.splice(i, 1);
+      continue;
+    }
+    drawShape(s);
+  }
+}
+requestAnimationFrame(render);
+
+// ─── MIDI ─────────────────────────────────────────────────────────────────────
+const dot         = document.getElementById('dot');
+const statusLabel = document.getElementById('status-label');
+const deviceSel   = document.getElementById('device-select');
+const chSel       = document.getElementById('ch-select');
+const eventLog    = document.getElementById('event-log');
+
+let midi        = null;
+let activeInput = null;
+let midiChannel = -1; // -1 = all
+
+let flashTimer;
+function flash() {
+  dot.classList.add('flash');
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => dot.classList.remove('flash'), 75);
+}
+
+async function initMIDI() {
+  if (!navigator.requestMIDIAccess) {
+    statusLabel.textContent = 'Web MIDI not supported';
+    return;
+  }
+  try {
+    midi = await navigator.requestMIDIAccess({ sysex: false });
+    buildDeviceList();
+    midi.onstatechange = buildDeviceList;
+  } catch (e) {
+    statusLabel.textContent = 'MIDI permission denied';
+  }
+}
+
+function buildDeviceList() {
+  const inputs   = [...midi.inputs.values()];
+  const prevId   = deviceSel.value;
+  deviceSel.innerHTML = '<option value="">— device —</option>';
+  inputs.forEach(inp => {
+    const o    = document.createElement('option');
+    o.value    = inp.id;
+    o.textContent = inp.name;
+    deviceSel.appendChild(o);
+  });
+
+  if (inputs.find(i => i.id === prevId)) {
+    deviceSel.value = prevId;
+  } else if (inputs.length === 1) {
+    deviceSel.value = inputs[0].id;
+    connectInput(inputs[0].id);
+  } else {
+    statusLabel.textContent = inputs.length ? 'Select device' : 'No MIDI devices';
+    dot.className = 'dot';
+  }
+}
+
+function connectInput(id) {
+  if (activeInput) activeInput.onmidimessage = null;
+  activeInput = id ? midi.inputs.get(id) : null;
+  if (activeInput) {
+    activeInput.onmidimessage = onMIDI;
+    statusLabel.textContent   = activeInput.name;
+    dot.className             = 'dot connected';
+  } else {
+    statusLabel.textContent = 'No device';
+    dot.className           = 'dot';
+  }
+}
+
+deviceSel.addEventListener('change', () => connectInput(deviceSel.value));
+
+// Populate channel selector
+for (let i = 1; i <= 16; i++) {
+  const o = document.createElement('option');
+  o.value       = i - 1;
+  o.textContent = `Ch ${i}`;
+  chSel.appendChild(o);
+}
+chSel.addEventListener('change', () => { midiChannel = parseInt(chSel.value); });
+
+function onMIDI(e) {
+  const [status, data1, data2] = e.data;
+  const type = status & 0xF0;
+  const ch   = status & 0x0F;
+
+  // Ignore clock (0xF8) and active sensing (0xFE)
+  if (status === 0xF8 || status === 0xFE) return;
+
+  // Channel filter
+  if (midiChannel !== -1 && ch !== midiChannel) return;
+
+  // Note On with velocity > 0
+  if (type === 0x90 && data2 > 0) {
+    flash();
+    eventLog.textContent = `note ${data1}  vel ${data2}  ch ${ch + 1}`;
+    trigger(data1, data2);
+  }
+}
+
+initMIDI();
+
+// ─── DEMO MODE ───────────────────────────────────────────────────────────────
+let demoTimer = null;
+const demoBtn = document.getElementById('demo-btn');
+
+function runDemo() {
+  const notes = [36, 38, 42, 46, 49, 51, 36, 38, 40, 43, 45, 47, 48];
+  const note  = notes[Math.floor(Math.random() * notes.length)];
+  const vel   = 40 + Math.floor(Math.random() * 88);
+  flash();
+  eventLog.textContent = `[demo] note ${note}  vel ${vel}`;
+  trigger(note, vel);
+  // Drum-roll style: vary timing rapidly
+  const nextDelay = 40 + Math.random() * 160;
+  demoTimer = setTimeout(runDemo, nextDelay);
+}
+
+demoBtn.addEventListener('click', () => {
+  if (demoTimer) {
+    clearTimeout(demoTimer);
+    demoTimer = null;
+    demoBtn.classList.remove('running');
+    demoBtn.textContent = 'Demo';
+  } else {
+    demoBtn.classList.add('running');
+    demoBtn.textContent = 'Stop';
+    runDemo();
+  }
+});
+
+// ─── SETTINGS UI ─────────────────────────────────────────────────────────────
+const panel      = document.getElementById('panel');
+const settingsBtn = document.getElementById('settings-btn');
+
+settingsBtn.addEventListener('click', () => {
+  const open = panel.classList.toggle('open');
+  settingsBtn.textContent = open ? 'Settings ▼' : 'Settings ▲';
+});
+
+// Range helper
+function bindRange(id, valId, getter, setter) {
+  const el  = document.getElementById(id);
+  const val = document.getElementById(valId);
+  el.addEventListener('input', () => {
+    setter(+el.value);
+    val.textContent = getter();
+    bgFill = makeBgFill(); // always safe to rebuild
+  });
+}
+
+bindRange('min-size', 'min-size-v',
+  () => cfg.minSize,
+  v  => { cfg.minSize = v; });
+
+bindRange('max-size', 'max-size-v',
+  () => cfg.maxSize,
+  v  => { cfg.maxSize = v; });
+
+bindRange('trail', 'trail-v',
+  () => `${Math.round(cfg.trail * 100)}%`,
+  v  => { cfg.trail = v / 100; bgFill = makeBgFill(); });
+
+bindRange('decay', 'decay-v',
+  () => cfg.decay.toFixed(3),
+  v  => { cfg.decay = v / 1000; });
+
+bindRange('max-shapes', 'max-v',
+  () => cfg.maxShapes,
+  v  => { cfg.maxShapes = v; });
+
+bindRange('burst', 'burst-v',
+  () => cfg.burst,
+  v  => { cfg.burst = v; });
+
+bindRange('spread', 'spread-v',
+  () => cfg.spread,
+  v  => { cfg.spread = v; });
+
+document.getElementById('color-mode').addEventListener('change', e => {
+  cfg.colorMode = e.target.value;
+});
+document.getElementById('mono-color').addEventListener('input', e => {
+  cfg.monoColor = e.target.value;
+});
+document.getElementById('bg-color').addEventListener('input', e => {
+  cfg.bgColor = e.target.value;
+  bgFill = makeBgFill();
+});
+document.getElementById('pos-mode').addEventListener('change', e => {
+  cfg.posMode = e.target.value;
+});
+document.getElementById('vel-mode').addEventListener('change', e => {
+  cfg.velMode = e.target.value;
+});
+document.getElementById('chk-rotate').addEventListener('change', e => {
+  cfg.rotate = e.target.checked;
+});
+document.getElementById('chk-drift').addEventListener('change', e => {
+  cfg.drift = e.target.checked;
+});
+document.getElementById('chk-scale').addEventListener('change', e => {
+  cfg.scaleOut = e.target.checked;
+});
+
+// Shape chip toggles
+document.querySelectorAll('.chip').forEach(el => {
+  el.addEventListener('click', () => {
+    const shape = el.dataset.shape;
+    if (cfg.shapes.has(shape)) {
+      if (cfg.shapes.size > 1) {
+        cfg.shapes.delete(shape);
+        el.classList.remove('on');
+      }
+    } else {
+      cfg.shapes.add(shape);
+      el.classList.add('on');
+    }
+  });
+});
+
+// ─── KEYBOARD SHORTCUTS ───────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  switch (e.key.toLowerCase()) {
+    case 's':
+      settingsBtn.click();
+      break;
+    case 'c':
+      active.forEach(release);
+      active.length = 0;
+      break;
+    case ' ':
+      e.preventDefault();
+      demoBtn.click();
+      break;
+  }
+});
+</script>
+</body>
+</html>
