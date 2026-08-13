@@ -220,12 +220,12 @@
   <div class="group">
     <div class="group-title">Shapes</div>
     <div class="chips" id="shape-chips">
-      <div class="chip on" data-shape="blob">Blob</div>
-      <div class="chip on" data-shape="scratch">Scratch</div>
-      <div class="chip on" data-shape="dots">Dots</div>
-      <div class="chip on" data-shape="loop">Loop</div>
-      <div class="chip on" data-shape="lines">Lines</div>
-      <div class="chip on" data-shape="smear">Smear</div>
+      <div class="chip on" data-shape="circle">Circle</div>
+      <div class="chip on" data-shape="ring">Ring</div>
+      <div class="chip on" data-shape="rect">Rect</div>
+      <div class="chip on" data-shape="diamond">Diamond</div>
+      <div class="chip on" data-shape="triangle">Triangle</div>
+      <div class="chip on" data-shape="star">Star</div>
     </div>
   </div>
 
@@ -275,8 +275,8 @@
   <div class="group">
     <div class="group-title">Background</div>
     <input type="color" id="bg-color" value="#000000">
-    <label class="check"><input type="checkbox" id="chk-rotate"> Rotate shapes</label>
-    <label class="check"><input type="checkbox" id="chk-drift"> Drift on spawn</label>
+    <label class="check"><input type="checkbox" id="chk-rotate" checked> Rotate shapes</label>
+    <label class="check"><input type="checkbox" id="chk-drift"  checked> Drift on spawn</label>
     <label class="check"><input type="checkbox" id="chk-scale"> Scale-out on spawn</label>
   </div>
 
@@ -289,7 +289,7 @@
 const cfg = {
   colorMode:  'chromatic',
   monoColor:  '#ffffff',
-  shapes:     new Set(['blob','scratch','dots','loop','lines','smear']),
+  shapes:     new Set(['circle','ring','rect','diamond','triangle','star']),
   minSize:    8,
   maxSize:    140,
   trail:      0.40,   // persistence 0–1 (higher = longer trail)
@@ -300,8 +300,8 @@ const cfg = {
   posMode:    'random',
   velMode:    'size',
   bgColor:    '#000000',
-  rotate:     false,
-  drift:      false,
+  rotate:     true,
+  drift:      true,
   scaleOut:   false,
 };
 
@@ -323,13 +323,12 @@ const active = [];
 function makeShape() {
   return {
     x: 0, y: 0, size: 0, alpha: 0, alpha0: 0,
-    type: 'blob',
+    type: 'circle',
     hue: 0, sat: 0, lit: 0,
     useRGB: false, r: 0, g: 0, b: 0,
     rot: 0, rotV: 0,
     vx: 0, vy: 0,
     decay: 0,
-    seed: 0,
   };
 }
 
@@ -407,7 +406,7 @@ function getPosition(note) {
 // ─── SHAPE TYPE ──────────────────────────────────────────────────────────────
 function pickShape(note) {
   const arr = [...cfg.shapes];
-  return arr.length ? arr[note % arr.length] : 'blob';
+  return arr.length ? arr[note % arr.length] : 'circle';
 }
 
 // ─── SPAWN ───────────────────────────────────────────────────────────────────
@@ -438,7 +437,6 @@ function spawn(note, velocity) {
   s.vx     = cfg.drift  ? (Math.random() - 0.5) * cfg.spread : 0;
   s.vy     = cfg.drift  ? (Math.random() - 0.5) * cfg.spread : 0;
   s.decay  = cfg.decay * (0.65 + Math.random() * 0.7);
-  s.seed   = (Math.random() * 2147483647) | 0;
 
   active.push(s);
 }
@@ -455,140 +453,25 @@ function trigger(note, velocity) {
 }
 
 // ─── DRAW SHAPES ─────────────────────────────────────────────────────────────
-// ─── SEEDED PRNG ─────────────────────────────────────────────────────────────
-// mulberry32 — fast, good quality, seed-reproducible
-function rng(seed) {
-  return function() {
-    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-// ─── ABSTRACT DRAW FUNCTIONS (Norman McLaren) ─────────────────────────────────
-
-// Biomorphic blob — organic amoeba via quadratic bezier curves
-// Inspired by: Begone Dull Care (1949), Boogie-Doodle (1941)
-function drawBlob(r, size) {
-  const n   = 5 + (r() * 4 | 0);
-  const pts = [];
-  for (let i = 0; i < n; i++) {
-    const base   = (i / n) * Math.PI * 2;
-    const jitter = (r() - 0.5) * (Math.PI / n) * 0.85;
-    const radius = size * (0.28 + r() * 0.44);
-    pts.push([Math.cos(base + jitter) * radius, Math.sin(base + jitter) * radius]);
-  }
+function drawPolygon(n, r) {
   ctx.beginPath();
   for (let i = 0; i < n; i++) {
-    const [x0, y0] = pts[i];
-    const [x1, y1] = pts[(i + 1) % n];
-    const cpx = (x0 + x1) / 2 + (r() - 0.5) * size * 0.2;
-    const cpy = (y0 + y1) / 2 + (r() - 0.5) * size * 0.2;
-    if (i === 0) ctx.moveTo(x0, y0);
-    ctx.quadraticCurveTo(cpx, cpy, x1, y1);
+    const a = (i / n) * Math.PI * 2 - Math.PI / 2;
+    i === 0 ? ctx.moveTo(Math.cos(a)*r, Math.sin(a)*r)
+            : ctx.lineTo(Math.cos(a)*r, Math.sin(a)*r);
   }
   ctx.closePath();
-  ctx.fill();
 }
 
-// Scratched/etched marks — irregular gestural strokes
-// Inspired by: Blinkity Blank (1955) — engraved directly into film emulsion
-function drawScratch(r, size) {
-  const n = 1 + (r() * 3 | 0);
-  ctx.lineCap = 'round';
-  for (let i = 0; i < n; i++) {
-    const angle = r() * Math.PI * 2;
-    const len   = size * (0.45 + r() * 0.75);
-    const ox    = (r() - 0.5) * size * 0.3;
-    const oy    = (r() - 0.5) * size * 0.3;
-    const cos   = Math.cos(angle);
-    const sin   = Math.sin(angle);
-    const x0 = ox + cos * -len * 0.5;
-    const y0 = oy + sin * -len * 0.5;
-    const x1 = ox + cos *  len * 0.5;
-    const y1 = oy + sin *  len * 0.5;
-    const cpx = (x0 + x1) / 2 + (r() - 0.5) * len * 0.4;
-    const cpy = (y0 + y1) / 2 + (r() - 0.5) * len * 0.4;
-    ctx.lineWidth = 1 + r() * 3.5;
-    ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.quadraticCurveTo(cpx, cpy, x1, y1);
-    ctx.stroke();
+function drawStar(pts, ro, ri) {
+  ctx.beginPath();
+  for (let i = 0; i < pts * 2; i++) {
+    const a = (i / (pts * 2)) * Math.PI * 2 - Math.PI / 2;
+    const r = i % 2 === 0 ? ro : ri;
+    i === 0 ? ctx.moveTo(Math.cos(a)*r, Math.sin(a)*r)
+            : ctx.lineTo(Math.cos(a)*r, Math.sin(a)*r);
   }
-}
-
-// Dot cluster — scattered circles of varying sizes
-// Inspired by: Dots (1940)
-function drawDots(r, size) {
-  const n = 4 + (r() * 9 | 0);
-  for (let i = 0; i < n; i++) {
-    const angle = r() * Math.PI * 2;
-    const dist  = r() * size * 0.44;
-    const dotR  = size * (0.04 + r() * 0.14);
-    ctx.beginPath();
-    ctx.arc(Math.cos(angle) * dist, Math.sin(angle) * dist, dotR, 0, Math.PI * 2);
-    ctx.fill();
-  }
-}
-
-// Loop forms — overlapping elliptical stroked curves
-// Inspired by: Loops (1940)
-function drawLoop(r, size) {
-  const n = 1 + (r() * 3 | 0);
-  ctx.lineCap = 'round';
-  for (let i = 0; i < n; i++) {
-    const rx   = size * (0.22 + r() * 0.38);
-    const ry   = size * (0.08 + r() * 0.22);
-    const ox   = (r() - 0.5) * size * 0.28;
-    const oy   = (r() - 0.5) * size * 0.28;
-    const tilt = r() * Math.PI;
-    ctx.lineWidth = 1.5 + r() * 3;
-    ctx.save();
-    ctx.translate(ox, oy);
-    ctx.rotate(tilt);
-    ctx.beginPath();
-    ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-  }
-}
-
-// Parallel line field — slightly irregular ruled lines
-// Inspired by: Lines: Vertical (1960), Lines: Horizontal (1962)
-function drawLines(r, size) {
-  const n        = 3 + (r() * 7 | 0);
-  const vertical = r() > 0.5;
-  const spacing  = size / (n + 1);
-  ctx.lineCap    = 'round';
-  for (let i = 0; i < n; i++) {
-    const off = spacing * (i + 1) - size / 2;
-    const len = size * (0.45 + r() * 0.7);
-    const w1  = (r() - 0.5) * size * 0.05;
-    const w2  = (r() - 0.5) * size * 0.05;
-    ctx.lineWidth = 0.8 + r() * 2.5;
-    ctx.beginPath();
-    if (vertical) {
-      ctx.moveTo(off + w1, -len / 2);
-      ctx.lineTo(off + w2,  len / 2);
-    } else {
-      ctx.moveTo(-len / 2, off + w1);
-      ctx.lineTo( len / 2, off + w2);
-    }
-    ctx.stroke();
-  }
-}
-
-// Paint smear — elongated organic blob
-// Inspired by: Begone Dull Care (1949) — color washes painted directly on film
-function drawSmear(r, size) {
-  const aspect = 2.5 + r() * 3.5;
-  const tilt   = r() * Math.PI;
-  ctx.save();
-  ctx.rotate(tilt);
-  ctx.scale(aspect, 1);
-  drawBlob(r, size / Math.sqrt(aspect));
-  ctx.restore();
+  ctx.closePath();
 }
 
 function drawShape(s) {
@@ -596,27 +479,57 @@ function drawShape(s) {
   ctx.translate(s.x, s.y);
   ctx.rotate(s.rot);
 
+  let displayAlpha = s.alpha;
   if (cfg.scaleOut) {
     const progress = 1 - s.alpha / s.alpha0;
     ctx.scale(1 + progress * 0.5, 1 + progress * 0.5);
   }
-  ctx.globalAlpha = s.alpha;
+  ctx.globalAlpha = displayAlpha;
 
+  const hs = s.size / 2;
   const color = s.useRGB
     ? `rgb(${s.r},${s.g},${s.b})`
     : `hsl(${s.hue},${s.sat}%,${s.lit}%)`;
   ctx.fillStyle   = color;
   ctx.strokeStyle = color;
-
-  const rand = rng(s.seed);
+  ctx.lineWidth   = Math.max(1.5, s.size * 0.07);
 
   switch (s.type) {
-    case 'blob':    drawBlob(rand, s.size);    break;
-    case 'scratch': drawScratch(rand, s.size); break;
-    case 'dots':    drawDots(rand, s.size);    break;
-    case 'loop':    drawLoop(rand, s.size);    break;
-    case 'lines':   drawLines(rand, s.size);   break;
-    case 'smear':   drawSmear(rand, s.size);   break;
+    case 'circle':
+      ctx.beginPath();
+      ctx.arc(0, 0, hs, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+
+    case 'ring':
+      ctx.beginPath();
+      ctx.arc(0, 0, hs, 0, Math.PI * 2);
+      ctx.stroke();
+      break;
+
+    case 'rect':
+      ctx.fillRect(-hs, -hs, s.size, s.size);
+      break;
+
+    case 'diamond':
+      ctx.beginPath();
+      ctx.moveTo(0, -hs);
+      ctx.lineTo(hs, 0);
+      ctx.lineTo(0, hs);
+      ctx.lineTo(-hs, 0);
+      ctx.closePath();
+      ctx.fill();
+      break;
+
+    case 'triangle':
+      drawPolygon(3, hs);
+      ctx.fill();
+      break;
+
+    case 'star':
+      drawStar(5, hs, hs * 0.42);
+      ctx.fill();
+      break;
   }
 
   ctx.restore();
